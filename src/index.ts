@@ -4,13 +4,25 @@ import express from 'express';
 import { load } from 'cheerio';
 
 type RankData = Record<'rank' | 'changeInRank' | 'category' | 'rankHistory', string>;
-type RanksInPlatforms = Record<'applePodcasts' | 'spotify', RankData[]>;
+type RanksInPlatforms = Record<string, RankData[]>;
 
 const scrapeRanking = async (podcast: string): Promise<RanksInPlatforms> => {
   const url = `https://chartable.com/podcasts/${podcast}/charts_partial`;
 
   const res = await axios.get(url);
   const $ = load(res.data);
+  const podcasts = $('div')
+    .children()
+    .toArray()
+    .reduce<{ podcastName: string; table: CheerioElement }[]>((acc, el) => {
+      if (el.attribs.class.includes('gray')) {
+        const podcastName = $(el).text().trim();
+        const table = el.nextSibling.next;
+        return [...acc, { podcastName, table }];
+      }
+      return acc;
+    }, []);
+
   const [, , applePodcastTable, , spotifyTable] = $('div').children().toArray();
 
   const getRankings = (chartType: string) => (
@@ -36,20 +48,19 @@ const scrapeRanking = async (podcast: string): Promise<RanksInPlatforms> => {
     return [...ranksInPlatForm, rankData];
   };
 
-  const applePodcasts = $(applePodcastTable)
-    .find('tr')
-    .toArray()
-    .reduce<RankData[]>(getRankings('itunes'), []);
-
-  const spotify = $(spotifyTable)
-    .find('tr')
-    .toArray()
-    .reduce<RankData[]>(getRankings('spotify'), []);
-
-  return {
-    applePodcasts,
-    spotify,
-  };
+  return podcasts.reduce<Record<string, RankData[]>>((acc, el) => {
+    const data = $(el.table).find('tr').toArray().reduce<RankData[]>(getRankings('spotify'), []);
+    const key = el.podcastName
+      .split(' ')
+      .map((str, index) => {
+        if (index === 0) {
+          return str.toLowerCase();
+        }
+        return str;
+      })
+      .join('');
+    return { ...acc, [key]: data };
+  }, {});
 };
 
 const app = express();
